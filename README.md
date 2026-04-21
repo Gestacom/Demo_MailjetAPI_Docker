@@ -29,9 +29,12 @@ Configurer au minimum :
 APP_TOKEN=un-token-secret-long
 APP_MASTER_KEY=une-cle-maitresse-de-32-caracteres-minimum
 HTTP_PORT=8080
+APP_CORS_ORIGINS=*
 ```
 
 `APP_MASTER_KEY` sert a chiffrer les cles Mailjet stockees localement. Ne la change pas apres avoir connecte des utilisateurs, sinon les credentials deja stockes ne seront plus decryptables.
+
+`APP_CORS_ORIGINS` controle les origines autorisees pour les appels depuis navigateur. En demo, `*` accepte toutes les origines. En production, utilise plutot une liste separee par virgules, par exemple `https://app.example.com,https://admin.example.com`.
 
 ## Lancement Docker
 
@@ -72,6 +75,8 @@ Toutes les actions metier utilisent `POST /` avec :
 X-App-Token: <APP_TOKEN>
 Content-Type: application/json
 ```
+
+Les requetes `OPTIONS` sont acceptees pour les preflights CORS des navigateurs.
 
 ### Connecter un utilisateur
 
