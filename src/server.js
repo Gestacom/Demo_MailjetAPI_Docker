@@ -21,6 +21,7 @@ const LOCKS_DIR = path.join(STORAGE_DIR, 'locks');
 const LOGS_DIR = envString('APP_LOGS_DIR', path.join(APP_ROOT, 'logs'));
 const LOG_FILE = path.join(LOGS_DIR, 'mailjet-service.log');
 const JSON_LIMIT_BYTES = Number(envString('JSON_LIMIT_BYTES', String(2 * 1024 * 1024)));
+const CORS_ALLOWED_ORIGINS = envString('APP_CORS_ORIGINS', '*');
 
 const userLocks = new Map();
 
@@ -43,7 +44,7 @@ const server = http.createServer((req, res) => {
       ok: false,
       request_id: requestId,
       error: 'internal_server_error',
-    });
+    }, req);
   });
 });
 
@@ -64,17 +65,26 @@ async function handleRequest(req, res) {
   try {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
 
+    if (req.method === 'OPTIONS') {
+      sendEmpty(res, 204, req);
+      return;
+    }
+
     if (req.method === 'GET' && url.pathname === '/health') {
       sendJson(res, 200, {
         ok: true,
         service: 'mailjet-api',
         node_version: process.version,
-      });
+      }, req);
       return;
     }
 
     if (req.method !== 'POST') {
-      sendJson(res, 405, errorPayload(requestId, 'method_not_allowed'));
+      sendJson(res, 405, errorPayload(requestId, 'method_not_allowed', null, {
+        received_method: req.method ?? null,
+        path: url.pathname,
+        allowed_methods: ['POST /', 'GET /health', 'OPTIONS *'],
+      }), req);
       return;
     }
 
@@ -105,7 +115,7 @@ async function handleRequest(req, res) {
       ok: true,
       request_id: requestId,
       data,
-    });
+    }, req);
   } catch (error) {
     if (error instanceof SyntaxError) {
       await logEvent('warning', 'invalid_json', {
@@ -114,7 +124,7 @@ async function handleRequest(req, res) {
         duration_ms: elapsedMs(startedAt),
       }, req);
 
-      sendJson(res, 400, errorPayload(requestId, 'invalid_json'));
+      sendJson(res, 400, errorPayload(requestId, 'invalid_json'), req);
       return;
     }
 
@@ -125,7 +135,7 @@ async function handleRequest(req, res) {
         duration_ms: elapsedMs(startedAt),
       }, req);
 
-      sendJson(res, 400, errorPayload(requestId, error.message));
+      sendJson(res, 400, errorPayload(requestId, error.message), req);
       return;
     }
 
@@ -136,7 +146,7 @@ async function handleRequest(req, res) {
         duration_ms: elapsedMs(startedAt),
       }, req);
 
-      sendJson(res, 503, errorPayload(requestId, 'service_unavailable', error.message));
+      sendJson(res, 503, errorPayload(requestId, 'service_unavailable', error.message), req);
       return;
     }
 
@@ -696,19 +706,59 @@ async function logEvent(level, event, data = {}, req = null) {
   await appendFile(LOG_FILE, `${JSON.stringify(entry)}\n`);
 }
 
-function sendJson(res, status, payload) {
+function sendJson(res, status, payload, req = null) {
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
     'Cache-Control': 'no-store',
+    ...corsHeaders(req),
   });
   res.end(JSON.stringify(payload));
 }
 
-function errorPayload(requestId, error, message = null) {
+function sendEmpty(res, status, req = null) {
+  res.writeHead(status, {
+    'Cache-Control': 'no-store',
+    ...corsHeaders(req),
+  });
+  res.end();
+}
+
+function corsHeaders(req = null) {
+  const origin = resolveCorsOrigin(req);
+
+  return {
+    'Access-Control-Allow-Origin': origin,
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, X-App-Token',
+    'Access-Control-Max-Age': '86400',
+    Vary: 'Origin',
+  };
+}
+
+function resolveCorsOrigin(req = null) {
+  if (CORS_ALLOWED_ORIGINS === '*') {
+    return '*';
+  }
+
+  const requestOrigin = req?.headers?.origin;
+  if (typeof requestOrigin !== 'string' || requestOrigin === '') {
+    return CORS_ALLOWED_ORIGINS.split(',')[0].trim();
+  }
+
+  const allowedOrigins = CORS_ALLOWED_ORIGINS
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+  return allowedOrigins.includes(requestOrigin) ? requestOrigin : allowedOrigins[0] ?? 'null';
+}
+
+function errorPayload(requestId, error, message = null, extra = {}) {
   const payload = {
     ok: false,
     request_id: requestId,
     error,
+    ...extra,
   };
 
   if (message !== null) {
