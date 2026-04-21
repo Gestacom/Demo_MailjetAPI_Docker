@@ -1,0 +1,22 @@
+services:
+  mailjet-api:
+    build: .
+    container_name: mailjet-api
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-8080}:3000"
+    env_file:
+      - .env
+    volumes:
+      - mailjet_storage:/usr/src/app/storage
+      - mailjet_logs:/usr/src/app/logs
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  mailjet_storage:
+  mailjet_logs:
